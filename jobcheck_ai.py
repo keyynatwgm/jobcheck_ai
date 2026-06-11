@@ -197,7 +197,7 @@ def paginate_dataframe(df, page_size, key):
     return df.iloc[(cp - 1) * page_size:cp * page_size]
 
 def highlight_ai_sentences(tasks):
-    kw = ["data", "analisis", "laporan", "otomatis", "mengolah", "memproses", "administrasi", "entry", "menghitung", "prediksi", "rutin", "arsip", "verifikasi", "digital", "perangkat lunak", "evaluasi", "monitoring", "dokumen", "pencatatan", "klasifikasi"]
+    kw = ["data", "analisis", "sistem", "model",  "komputer", "perangkat", "mesin", "pengujian", "uji",  "rancang", "kembang", "laporan", "prediksi", "evaluasi", "monitoring", "otomatis", "digital", "pencatatan", "verifikasi", "efisiensi", "akurasi", "teknologi", "informasi", "prosedur", "metode", "spesifikasi"]   
     sentences = [s.strip() for s in tasks.replace("[SEP]", "\n").split("\n") if s.strip()]
     result = []
     for s in sentences:
@@ -206,10 +206,35 @@ def highlight_ai_sentences(tasks):
     return result
 
 def skill_heatmap(tasks):
-    kw = ["data", "analisis", "laporan", "otomatis", "mengolah", "memproses", "administrasi", "entry", "menghitung", "prediksi", "rutin", "arsip", "verifikasi", "digital", "perangkat lunak", "evaluasi", "monitoring", "dokumen", "pencatatan", "klasifikasi"]
+    kw = ["data", "analisis", "sistem", "model",  "komputer", "perangkat", "mesin", "pengujian", "uji",  "rancang", "kembang", "laporan", "prediksi", "evaluasi", "monitoring", "otomatis", "digital", "pencatatan", "verifikasi", "efisiensi", "akurasi", "teknologi", "informasi", "prosedur", "metode", "spesifikasi"]   
     tasks_lower = tasks.lower()
     scores = [len(re.findall(r'\b' + k, tasks_lower)) for k in kw]
     return pd.DataFrame({"skill": kw, "score": scores}).sort_values(by="score", ascending=False)
+
+def normalize_text_for_comparison(text):
+    """Normalize text: lowercase, hapus spasi, hapus punctuation"""
+    text = text.lower().strip()
+    text = re.sub(r'[^\w\s]', '', text)  # Hapus punctuation
+    text = re.sub(r'\s+', '', text)       # Hapus semua spasi
+    return text
+
+def check_duplicate_in_gsheet(nama_pekerjaan):
+    """Cek apakah pekerjaan sudah ada di Google Sheets (dengan normalisasi)"""
+    try:
+        hist_df = load_from_gsheet()
+        if hist_df.empty:
+            return False
+        
+        normalized_new = normalize_text_for_comparison(nama_pekerjaan)
+        
+        for idx, row in hist_df.iterrows():
+            normalized_existing = normalize_text_for_comparison(row['nama_pekerjaan'])
+            if normalized_new == normalized_existing:
+                return True
+        
+        return False
+    except:
+        return False
 
 def are_jobs_similar(name1, name2, threshold=0.8):
     return SequenceMatcher(None, name1.lower().strip(), name2.lower().strip()).ratio() >= threshold
@@ -335,58 +360,97 @@ def find_relevant_columns(df_columns):
 # --- PAGE: OVERVIEW ---
 if page == "Overview":
     try:
-        df = pd.read_csv("data/exposure_job.csv")
+        # 1. Load data hasil prediksi model IndoBERT kamu
+        df = pd.read_csv("data/hasil_klasifikasi_indobert.csv")
+        
+        # Bersihkan text separator agar rapi saat dibaca di tabel
         df['tasks_clean'] = df['tasks'].str.replace("[SEP]", ", ", regex=False)
 
+        # 2. TAMPILKAN METRIC CARD (Berdasarkan kolom 'hasil_klasifikasi')
         m1, m2, m3 = st.columns(3)
-        with m1: st.markdown(f"<div class='metric-card'><div class='metric-label'>Total Pekerjaan</div><div class='metric-value'>{len(df)}</div></div>", unsafe_allow_html=True)
-        with m2: st.markdown(f"<div class='metric-card'><div class='metric-label'>Terotomasi AI</div><div class='metric-value'>{len(df[df['label']==1])}</div></div>", unsafe_allow_html=True)
-        with m3: st.markdown(f"<div class='metric-card'><div class='metric-label'>Tidak Teromatisasi AI</div><div class='metric-value'>{len(df[df['label']==0])}</div></div>", unsafe_allow_html=True)
+        with m1: 
+            st.markdown(f"<div class='metric-card'><div class='metric-label'>Total Pekerjaan</div><div class='metric-value'>{len(df)}</div></div>", unsafe_allow_html=True)
+        with m2: 
+            total_terotomasi = len(df[df['hasil_klasifikasi'] == 'Terotomatisasi'])
+            st.markdown(f"<div class='metric-card'><div class='metric-label'>Terotomasi AI (Model)</div><div class='metric-value'>{total_terotomasi}</div></div>", unsafe_allow_html=True)
+        with m3: 
+            total_aman = len(df[df['hasil_klasifikasi'] == 'Tidak Terotomatisasi'])
+            st.markdown(f"<div class='metric-card'><div class='metric-label'>Tidak Terotomatisasi (Model)</div><div class='metric-value'>{total_aman}</div></div>", unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
+        
+        # 3. CONTAINER DAFTAR PEKERJAAN & FILTER
         with st.container(border=True):
-            st.subheader("Daftar Pekerjaan")
+            st.subheader("Daftar Hasil Klasifikasi Pekerjaan")
+            
             f1, f2 = st.columns([2, 1])
             search_query = f1.text_input("🔍 Cari Nama Pekerjaan", placeholder="Ketik nama pekerjaan...")
-            filter_label = f2.selectbox("Filter Klasifikasi", ["Semua", "terotomatisasi", "tidak terotomatisasi"])
+            # Sesuaikan opsi selectbox dengan nilai teks di kolom hasil_klasifikasi
+            filter_label = f2.selectbox("Filter Status Otomasi", ["Semua", "Terotomatisasi", "Tidak Terotomatisasi"])
 
             df_display = df.copy()
-            df_display['klasifikasi'] = df_display['label'].map({1: "terotomatisasi", 0: "tidak terotomatisasi"})
             
+            # Filter berdasarkan Pencarian Nama Pekerjaan
             if search_query: 
                 df_display = df_display[df_display['title'].str.contains(search_query, case=False, na=False)]
+            
+            # Filter berdasarkan Dropdown Status Klasifikasi Model
             if filter_label != "Semua": 
-                df_display = df_display[df_display['klasifikasi'] == filter_label]
+                df_display = df_display[df_display['hasil_klasifikasi'] == filter_label]
 
-            # Pilih kolom yang dibutuhkan saja SEBELUM direname untuk menghindari duplikasi
-            cols_to_select = ['title', 'tasks_clean', 'klasifikasi', 'exposure_score']
+            # Format kolom score_prediksi menjadi persentase agar siap tampil
+            df_display['score_prediksi_fmt'] = df_display['score_prediksi'].map(lambda x: f"{x:.2%}")
+
+            # Menyusun kolom yang dipilih (memasukkan oidn_code jika ada)
+            cols_to_select = ['title', 'tasks_clean', 'exposure_score', 'score_prediksi_fmt', 'hasil_klasifikasi']
             if 'oidn_code' in df_display.columns:
                 cols_to_select = ['oidn_code'] + cols_to_select
             
-            df_final = df_display[cols_to_select].rename(columns={
+            # Rename nama kolom agar tampak profesional di interface website
+            rename_dict = {
+                'oidn_code': 'OIDN_CODE',
                 'title': 'Nama Pekerjaan', 
-                'tasks_clean': 'Tasks', 
-                'klasifikasi': 'Klasifikasi',
-                'exposure_score': 'Skor'
-            })
+                'tasks_clean': 'Deskripsi Tugas', 
+                'exposure_score': 'Skor OES',
+                'score_prediksi_fmt': 'Confidence AI',
+                'hasil_klasifikasi': 'Status Otomasi'
+            }
             
+            df_final = df_display[cols_to_select].rename(columns=rename_dict)
+            
+            # Tampilkan tabel data dengan pagination milikmu
             st.dataframe(paginate_dataframe(df_final, 10, "ov_page"), use_container_width=True, hide_index=True)
 
+        # 4. VISUALISASI GRAFIK (CHART)
         ch1, ch2 = st.columns(2)
         with ch1:
             with st.container(border=True):
-                st.subheader("Kategori Dampak AI pada Pekerjaan")
-                lc = df['label'].value_counts().reset_index()
-                lc.columns = ['label', 'jumlah']
-                lc['label'] = lc['label'].map({1: "Terotomasi AI", 0: "Tidak Terotomatisasi AI"})
-                st.plotly_chart(px.pie(lc, names='label', values='jumlah', hole=0.7, color_discrete_sequence=["#4F6DFF", "#E0E7FF"]), use_container_width=True)
+                st.subheader("Kategori Dampak AI (Prediksi Model)")
+                # Hitung value counts langsung dari kolom hasil_klasifikasi
+                lc = df['hasil_klasifikasi'].value_counts().reset_index()
+                lc.columns = ['Status Otomasi', 'Jumlah']
+                
+                # Gambar Donut Chart hasil model IndoBERT
+                fig_pie = px.pie(lc, names='Status Otomasi', values='Jumlah', hole=0.7, 
+                                 color_discrete_sequence=["#4F6DFF", "#E0E7FF"])
+                st.plotly_chart(fig_pie, use_container_width=True)
+                
         with ch2:
             with st.container(border=True):
-                st.subheader("Top Pekerjaan Rentan AI")
+                st.subheader("Top 10 Pekerjaan Rentan AI")
+                # Mengurutkan berdasarkan skor exposure tertinggi untuk melihat pekerjaan ter-expose
                 top10 = df.sort_values(by='exposure_score', ascending=False).head(10)
-                st.plotly_chart(px.bar(top10, x='exposure_score', y='title', orientation='h', color_discrete_sequence=["#4F6DFF"]), use_container_width=True)
+                
+                # Gambar Bar Chart horizontal
+                fig_bar = px.bar(top10, x='exposure_score', y='title', orientation='h', 
+                                 labels={'exposure_score': 'Skor OES', 'title': 'Pekerjaan'},
+                                 color_discrete_sequence=["#4F6DFF"])
+                # Membalik urutan y-axis agar peringkat #1 berada di paling atas chart
+                fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig_bar, use_container_width=True)
+                
     except FileNotFoundError:
-        st.error("File 'data/exposure_job.csv' tidak ditemukan.")
+        st.error("File 'data/hasil_klasifikasi_indobert.csv' tidak ditemukan. Pastikan file hasil prediksi model Anda sudah diexport ke folder data.")
 
 # --- PAGE: CEK TEKS ---
 elif page == "Cek Pekerjaan Teks":
@@ -398,48 +462,79 @@ elif page == "Cek Pekerjaan Teks":
         
         job_name = st.text_input("Nama Pekerjaan", placeholder="Contoh: Akuntan", key="input_job_name", on_change=lambda: st.session_state.update({"text_check_result": None}))
         job_desc = st.text_area("Deskripsi Task", placeholder="Contoh: Menginput data transaksi harian...", height=150, key="input_job_desc", on_change=lambda: st.session_state.update({"text_check_result": None}))
-
+        
+        # Tampilkan counter karakter
+        char_count = len(job_desc)
+        if char_count > 700:
+            st.error(f"⚠️ Deskripsi melebihi 700 karakter ({char_count}/700). Hanya 700 karakter pertama yang akan diproses.")
+            job_desc_processed = job_desc[:700]
+        else:
+            st.warning(f"Jumlah Karakter: {char_count}/700")
+            job_desc_processed = job_desc
+        
         if st.button("Mulai Analisis"):
-            if not job_name.strip() or not job_desc.strip():
-                st.warning("⚠️ Silahkan masukkan nama pekerjaan dan tugasnya")
+            if not job_name.strip() or not job_desc_processed.strip():
+                st.error("⚠️ Silahkan masukkan nama pekerjaan dan tugasnya")
             else:
-                label_txt, conf, lbl_idx = predict(job_name, job_desc)
-                st.session_state.text_check_result = {"label": label_txt, "conf": conf, "desc": job_desc}
-
+                label_txt, conf, lbl_idx = predict(job_name, job_desc_processed)
+                st.session_state.text_check_result = {"label": label_txt, "conf": conf, "desc": job_desc_processed}
+                
+                new_entry = {
+                    "nama_pekerjaan": job_name, 
+                    "tasks": job_desc_processed, 
+                    "prediction": label_txt.title(), 
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                
+                # CEK DUPLIKAT SEBELUM SAVE KE GSHEET
+                is_duplicate = check_duplicate_in_gsheet(job_name)
+                
+                if not is_duplicate:
+                    # Jika tidak ada duplikat, simpan ke Google Sheets
+                    save_to_gsheet(new_entry)
+                    st.success("✅ Data berhasil disimpan ke riwayat")
+                else:
+                    st.warning("Pekerjaan ini sudah pernah dicek sebelumnya. Data tidak disimpan ulang.", icon="🚨")
+                
+                # Update history session state
                 history = st.session_state.history_data
                 match_index = -1
                 
                 for i, h in enumerate(history):
-                    if are_jobs_similar(h['nama'], job_name, threshold=0.8):
+                    if are_jobs_similar(h['nama_pekerjaan'], job_name, threshold=0.8):
                         match_index = i
                         break
-
-                new_entry = {
-                    "nama_pekerjaan": job_name, 
-                    "tasks": job_desc, 
-                    "prediction": label_txt.title(), 
-                    "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                save_to_gsheet(new_entry)
-                st.session_state.history_data.insert(0, new_entry)
-
+                
                 if match_index != -1:
                     st.session_state.history_data[match_index] = new_entry 
                 else:
                     st.session_state.history_data.insert(0, new_entry)
-
+        
         if st.session_state.text_check_result:
             res = st.session_state.text_check_result
             col_res1, col_res2 = st.columns(2)
             col_res1.metric("Hasil", res["label"].title())
             col_res2.metric("Confidence Score", f"{res['conf']:.2%}")
-            if res["conf"] >= THRESHOLD: st.success("Pekerjaan ini memiliki kemungkinan Terotomatisasi AI")
-            else: st.info("Pekerjaan ini relatif aman dari otomatisasi AI")
-
+            
+            if res["conf"] >= THRESHOLD: 
+                st.success("Pekerjaan ini memiliki kemungkinan Terotomatisasi AI")
+            else: 
+                st.info("Pekerjaan ini relatif aman dari otomatisasi AI")
+            
             st.subheader("Analisis Task")
             for sent, score in highlight_ai_sentences(res["desc"]):
-                st.markdown(f"- {'🔴 **' + sent + '**' if score > 0 else '⚪ ' + sent}")
-
+                if score > 0:
+                    highlighted_sent = sent
+                    kw = ["data", "analisis", "sistem", "model",  "komputer", "perangkat", "mesin", "pengujian", "uji",  "rancang", "kembang", "laporan", "prediksi", "evaluasi", "monitoring", "otomatis", "digital", "pencatatan", "verifikasi", "efisiensi", "akurasi", "teknologi", "informasi", "prosedur", "metode", "spesifikasi"]   
+                    for keyword in kw:
+                        if keyword in sent.lower():
+                            pattern = re.compile(r'\b' + re.escape(keyword) + r'\b', re.IGNORECASE)
+                            highlighted_sent = pattern.sub(f"**{keyword}**", highlighted_sent)
+                    
+                    st.markdown(f"- 🔴 {highlighted_sent}")
+                else:
+                    st.markdown(f"- ⚪ {sent}")
+            
             fig, ax = plt.subplots(figsize=(8, 2))
             sns.heatmap(skill_heatmap(res["desc"]).set_index("skill").T, cmap="Blues", annot=True, cbar=False, ax=ax)
             st.pyplot(fig)
@@ -526,12 +621,16 @@ elif page == "Jobs Testing File":
             pie_df.columns = ['Kategori', 'Jumlah']
             st.plotly_chart(px.pie(pie_df, names='Kategori', values='Jumlah', hole=0.6), use_container_width=True)
         with col2:
-            st.subheader("Top Pekerjaan Rentan AI")
+            st.subheader("Top 10 Pekerjaan Rentan AI")
             top_df = dt.copy()
             top_df['confidence_numeric'] = top_df['confidence_numeric'].astype(float)
             top_df = top_df.sort_values(by='confidence_numeric', ascending=False).head(10)
-            st.plotly_chart(px.bar(top_df, x='confidence_numeric', y='Nama Pekerjaan', orientation='h'), use_container_width=True)
-
+            fig_bar = px.bar(top_df, x='confidence_numeric', y='Nama Pekerjaan', orientation='h',
+                            labels={'confidence_numeric': 'Confidence Score', 'Nama Pekerjaan': 'Pekerjaan'},
+                            color_discrete_sequence=["#4F6DFF"])
+            fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_bar, use_container_width=True)
+            
         st.markdown("### 💾 Simpan Hasil Prediksi")
         col_title, col_tasks = st.session_state.col_title, st.session_state.col_tasks
         export_df = dt[[col_title, col_tasks]].copy()
@@ -554,6 +653,15 @@ elif page == "Jobs Testing File":
 # --- PAGE: RIWAYAT DETEKSI ---
 elif page == "Riwayat Deteksi":
     st.markdown("<h3 style='text-align:center;'>Riwayat Deteksi</h3>", unsafe_allow_html=True)
+    
+    # Inisialisasi session state untuk filter
+    if "riwayat_start_date" not in st.session_state:
+        st.session_state.riwayat_start_date = None
+    if "riwayat_end_date" not in st.session_state:
+        st.session_state.riwayat_end_date = None
+    if "riwayat_search" not in st.session_state:
+        st.session_state.riwayat_search = ""
+    
     # Ambil data
     hist_df = load_from_gsheet()
     
@@ -569,18 +677,30 @@ elif page == "Riwayat Deteksi":
         hist_df = hist_df.drop_duplicates(subset=['_nama_clean', '_tasks_clean'], keep='last')
         hist_df = hist_df.drop(columns=['_nama_clean', '_tasks_clean'])
         
+        # Set default date jika belum ada
+        if st.session_state.riwayat_start_date is None:
+            st.session_state.riwayat_start_date = hist_df['date'].min().date()
+        if st.session_state.riwayat_end_date is None:
+            st.session_state.riwayat_end_date = hist_df['date'].max().date()
+        
         # UI Filter Tanggal
         f_col1, f_col2, f_col3 = st.columns([2, 2, 1])
         with f_col1: 
-            start_date = st.date_input("Dari Tanggal", value=hist_df['date'].min())
+            start_date = st.date_input("Dari Tanggal", value=st.session_state.riwayat_start_date, key="start_date_input")
+            st.session_state.riwayat_start_date = start_date
         with f_col2: 
-            end_date = st.date_input("Ke Tanggal", value=hist_df['date'].max())
+            end_date = st.date_input("Ke Tanggal", value=st.session_state.riwayat_end_date, key="end_date_input")
+            st.session_state.riwayat_end_date = end_date
         with f_col3: 
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("Reset Filter"):
+            if st.button("Reset Filter", key="reset_filter_btn"):
+                # Reset semua filter
+                st.session_state.riwayat_start_date = hist_df['date'].min().date()
+                st.session_state.riwayat_end_date = hist_df['date'].max().date()
+                st.session_state.riwayat_search = ""
                 st.rerun()
         
-        # Logika Filter Data
+        # Logika Filter Data berdasarkan tanggal
         mask = (hist_df['date'].dt.date >= start_date) & (hist_df['date'].dt.date <= end_date)
         filtered_df = hist_df.loc[mask]
         
@@ -592,8 +712,17 @@ elif page == "Riwayat Deteksi":
             "date": "Date"
         })
         
-        # SEARCH INPUT (SEBELUM CEK KOSONG)
-        search = st.text_input("Search:", placeholder="Cari nama pekerjaan di riwayat...")
+        # SEARCH INPUT DAN BUTTON SEARCH
+        s_col1, s_col2 = st.columns([4, 1])
+        with s_col1:
+            search = st.text_input("Search:", placeholder="Cari nama pekerjaan di riwayat...", value=st.session_state.riwayat_search, key="search_input")
+            st.session_state.riwayat_search = search
+        
+        with s_col2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            search_btn = st.button("🔍 Cari", key="search_btn")
+        
+        # Filter berdasarkan search
         if search:
             display_hist = display_hist[display_hist['Nama Pekerjaan'].str.contains(search, case=False)]
         
