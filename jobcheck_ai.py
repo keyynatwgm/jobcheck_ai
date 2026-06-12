@@ -101,18 +101,19 @@ st.markdown("""
 def load_essentials():
     MODEL_ID = "M9_801010_CLS_LR1e-4" 
     
-    # Try-Except untuk mencegah NameError jika model gagal dimuat
     try:
         tokenizer = AutoTokenizer.from_pretrained("indobenchmark/indobert-base-p1")
+        from transformers import AutoModel
         bert_model = AutoModel.from_pretrained("indobenchmark/indobert-base-p1")
         bert_model.eval()
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cpu")  # Force CPU
         bert_model.to(device)
     except Exception:
         tokenizer, bert_model, device = None, None, None
 
     try:
-        mlp_model = load_keras_model(f'models/{MODEL_ID}.h5', compile=False)
+        import joblib
+        mlp_model = joblib.load(f'models/{MODEL_ID}.pkl')
     except Exception:
         mlp_model = None
 
@@ -123,8 +124,6 @@ def load_essentials():
         threshold = 0.5
         
     return tokenizer, bert_model, mlp_model, threshold, device
-
-tokenizer, bert_model, mlp_model, THRESHOLD, device = load_essentials()
 
 def get_gsheet_client():
     gc = gspread.service_account(filename='credentials.json')
